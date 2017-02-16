@@ -1,0 +1,73 @@
+#!/bin/sh
+
+echo ""
+echo "Starting TokuDB backup"
+echo ""
+
+usage(){
+	echo ""
+	echo "toku_backup is a wrapper shell script for the Toku Backup Plugin.  This is used to help automate the backup process for TokuDB backups."
+	echo ""
+	echo "Usage for $0 : "
+	echo " By default the script will look for ~/.my.cnf and try to connect to the database.  If username and password are needed please provide as shown below"
+	echo " Script has to be run on the TokuDB MySQL server it is backing up" 
+	echo " -u	Provide MySQL username"
+	echo " -p	Provide MySQL password"
+	echo " -d	Defaults configuration file that contains the client configuration user and password.  DEFAULT VALUE : ~/.my.cnf"
+	echo " -b	Backup Location.  Will be created if it does not exist.  REQUIRED"
+	echo " -r	Retain the specified number of backups that start with tokubackup_.  Any amount of backups greater than the number will be deleted.  DEFAULT VALUE : Unlimited"
+	echo ""
+	echo "Examples :"
+	echo " $0 -u root -p password -b /backup"
+	echo " $0 -d /root/.my.cnf -b /backup -r 5"
+	echo ""
+	exit 1
+}
+	
+# Validate Arguments
+
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		-u) MYSQL_USER="$2"; shift 2;;
+		-p) MYSQL_PASS="$2"; shift 2;;
+		-d) DEFAULTS="$2"; shift 2;;
+		-b) BACKUP_PATH="$2"; shift 2;;
+		-r) RETAIN="$2"; shift 2;;
+		-*) echo "unknown option: $1" >&2; usage; exit 1;;
+		*) echo "unrecognized argument: $1"; usage; exit 1;;
+  	esac
+done
+
+[ -z "${DEFAULTS}" -a -z "${MYSQL_USER}" ] && echo "ERROR: MySQL credentials are not defined.  Please set either defaults file or MySQL Username and Password!" && usage && exit 1
+[ -z "${BACKUP_PATH}" ] && echo "ERROR: You have not specified a backup path!" && usage && exit 1
+
+# Build MySQL Connection
+echo "MySQL Connectivity"
+CONN_PARAM=''
+if [ ${MYSQL_USER} ]; then
+	echo "    Checking with Username ${MYSQL_USER} and password if set"
+        CONN_PARAM="-B -N -u${MYSQL_USER}"
+	if [ ${MYSQL_PASS} ]; then
+		CONN_PARAM="${CONN_PARAM} -p${MYSQL_PASS}"
+	fi
+elif [ ${DEFAULTS} ]; then
+	echo "    Checking MySQL connectivity using defaults file ${DEFAULTS}"
+        CONN_PARAM="--defaults-file=${DEFAULTS} -B -N"
+else
+	CONN_PARAM="-B -N"
+fi
+
+[ `mysql $CONN_PARAM -e "SHOW DATABASES" | grep mysql | wc -l` -eq 0 ] && echo "ERROR: Unable to connect to MySQL" && usage && exit 1 
+echo "    MySQL connectivity verified"
+
+# Create New Backup Sub Directory
+echo ""
+echo "Starting TokuDB Backup"
+[ ! -d "${BACKUP_PATH}" ] && echo "Creating backup path ${BACKUP_PATH}" && mkdir ${BACKUP_PATH} 
+
+# Checking if retention is set and if it is, provide the number of backups that currently exist
+[ ${RETAIN} ] && echo "    # of backups currently : " `ls -1 ${BACKUP_PATH} | grep tokubackup_ | wc -l` 
+
+# Execute backup and check for error
+
+
