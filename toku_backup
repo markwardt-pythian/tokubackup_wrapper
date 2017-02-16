@@ -109,8 +109,6 @@ echo ""
 echo "Final steps"
 echo "    Backup Size : "`du -sh $FULL_BACKUP_PATH`
 
-echo "    Starting cleanup of old backups"
-
 if [ ${RETAIN} ]; then
 	echo "    Starting cleanup of old backups"
 	NUM_BACKUPS=`ls -1 ${BACKUP_PATH} | grep tokubackup_ | wc -l`
