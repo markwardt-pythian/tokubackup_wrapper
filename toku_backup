@@ -16,6 +16,7 @@ usage(){
 	echo " -d	Defaults configuration file that contains the client configuration user and password.  DEFAULT VALUE : ~/.my.cnf"
 	echo " -b	Backup Location.  Will be created if it does not exist.  REQUIRED"
 	echo " -r	Retain the specified number of backups that start with tokubackup_.  Any amount of backups greater than the number will be deleted.  DEFAULT VALUE : Unlimited"
+	echo " -c	Specify your MySQL configuration file to backup.  DEFAULT VALUE : /etc/my.cnf or /etc/mysql/my.cnf"
 	echo ""
 	echo "Examples :"
 	echo " $0 -u root -p password -b /backup"
@@ -33,6 +34,7 @@ while [ "$#" -gt 0 ]; do
 		-d) DEFAULTS="$2"; shift 2;;
 		-b) BACKUP_PATH="$2"; shift 2;;
 		-r) RETAIN="$2"; shift 2;;
+		-c) CONFIG="$2"; shift 2;;
 		-*) echo "unknown option: $1" >&2; usage; exit 1;;
 		*) echo "unrecognized argument: $1"; usage; exit 1;;
   	esac
@@ -42,6 +44,7 @@ done
 [ -z "${BACKUP_PATH}" ] && echo "ERROR: You have not specified a backup path!" && usage && exit 1
 
 # Build MySQL Connection
+
 echo "MySQL Connectivity"
 CONN_PARAM=''
 if [ ${MYSQL_USER} ]; then
@@ -61,13 +64,62 @@ fi
 echo "    MySQL connectivity verified"
 
 # Create New Backup Sub Directory
+
 echo ""
 echo "Starting TokuDB Backup"
-[ ! -d "${BACKUP_PATH}" ] && echo "Creating backup path ${BACKUP_PATH}" && mkdir ${BACKUP_PATH} 
+[ ! -d "${BACKUP_PATH}" ] && echo "    Creating backup path ${BACKUP_PATH}" && mkdir $BACKUP_PATH && chown mysql:mysql $BACKUP_PATH 
+FULL_BACKUP_PATH="${BACKUP_PATH}/tokubackup_"`date +%Y%m%d.%H%M%S`
+[ ! -d "${FULL_BACKUP_PATH}" ] && echo "    Creating backup path ${FULL_BACKUP_PATH}" && mkdir $FULL_BACKUP_PATH && chown mysql:mysql $FULL_BACKUP_PATH
 
-# Checking if retention is set and if it is, provide the number of backups that currently exist
-[ ${RETAIN} ] && echo "    # of backups currently : " `ls -1 ${BACKUP_PATH} | grep tokubackup_ | wc -l` 
+# Backing up configuration
 
-# Execute backup and check for error
+if [ ${CONFIG} ]; then
+        if [ ! -e ${CONFIG} ]; then
+                echo "    You have specified a configuration file that does not exist : ${CONFIG}" 
+                exit 1
+        else
+                echo "    Copying configuration file : $CONFIG --> $FULL_BACKUP_PATH"
+                cp $CONFIG $FULL_BACKUP_PATH;
+        fi
+else
+        if [ ! -e '/etc/my.cnf' -a ! -e '/etc/mysql/my.cnf' ]; then
+                echo "    Unable to find a configuration file to backup at /etc/my.cnf or /etc/mysql/my.cnf"
+                exit 1
+        else
+                [ -e '/etc/my.cnf' ] && echo "    Copying configuration file : /etc/my.cnf --> $FULL_BACKUP_PATH/etc_my.cnf" && cp '/etc/my.cnf' $FULL_BACKUP_PATH/etc_my.cnf
+                [ -e '/etc/mysql/my.cnf' ] && echo "    Copying configuration file : /etc/mysql/my.cnf --> $FULL_BACKUP_PATH/etc_mysql_my.cnf" && cp '/etc/my.cnf' $FULL_BACKUP_PATH/etc_mysql_my.cnf
+        fi
+fi
 
+# Starting database backup
 
+mysql $CONN_PARAM -e "set tokudb_backup_dir='${FULL_BACKUP_PATH}'" > /dev/null &
+sleep 1 
+echo "    Backup Status : "
+while [ `mysql $CONN_PARAM -e "SELECT state FROM INFORMATION_SCHEMA.PROCESSLIST" | grep tokudb | wc -l` -gt 0 ]
+do 
+	mysql $CONN_PARAM -e "SELECT CONCAT('        ',state) FROM INFORMATION_SCHEMA.PROCESSLIST" | grep tokudb
+	sleep 1
+done 
+echo "    Backup Complete!"
+
+# Final Steps
+
+echo ""
+echo "Final steps"
+echo "    Backup Size : "`du -sh $FULL_BACKUP_PATH`
+
+echo "    Starting cleanup of old backups"
+
+if [ ${RETAIN} ]; then
+	echo "    Starting cleanup of old backups"
+	NUM_BACKUPS=`ls -1 ${BACKUP_PATH} | grep tokubackup_ | wc -l`
+	echo "    # of backups currently : ${NUM_BACKUPS}"
+	echo "    Retaining ${RETAIN} backups"
+	while [ ${RETAIN} -lt `ls -1 ${BACKUP_PATH} | grep tokubackup_ | wc -l` ]
+	do
+		TO_DELETE=`ls -t $BACKUP_PATH | grep tokubackup_ | tail -n 1`
+		echo "        Deleting ${BACKUP_PATH}/${TO_DELETE}"	
+		rm -rf $BACKUP_PATH/$TO_DELETE
+	done
+fi
