@@ -32,7 +32,7 @@ while [ "$#" -gt 0 ]; do
 		-u) MYSQL_USER="$2"; shift 2;;
 		-p) MYSQL_PASS="$2"; shift 2;;
 		-d) DEFAULTS="$2"; shift 2;;
-		-b) BACKUP_PATH="$2"; shift 2;;
+		-b) BACKUP_PATH="$(cd "$(dirname "$2")"; pwd)/$(basename "$2")"; shift 2;;
 		-r) RETAIN="$2"; shift 2;;
 		-c) CONFIG="$2"; shift 2;;
 		-*) echo "unknown option: $1" >&2; usage; exit 1;;
@@ -42,6 +42,7 @@ done
 
 [ -z "${DEFAULTS}" -a -z "${MYSQL_USER}" ] && echo "ERROR: MySQL credentials are not defined.  Please set either defaults file or MySQL Username and Password!" && usage && exit 1
 [ -z "${BACKUP_PATH}" ] && echo "ERROR: You have not specified a backup path!" && usage && exit 1
+[ `id -u` -ne 0 ] && echo "ERROR: Script must be run as root" && exit 1
 
 # Build MySQL Connection
 
@@ -67,9 +68,20 @@ echo "    MySQL connectivity verified"
 
 echo ""
 echo "Starting TokuDB Backup"
-[ ! -d "${BACKUP_PATH}" ] && echo "    Creating backup path ${BACKUP_PATH}" && mkdir $BACKUP_PATH && chown mysql:mysql $BACKUP_PATH 
+[ ! -d "${BACKUP_PATH}" ] && echo "    Creating backup path ${BACKUP_PATH} and setting MySQL as the owner" && mkdir $BACKUP_PATH && chown mysql:mysql $BACKUP_PATH 
 FULL_BACKUP_PATH="${BACKUP_PATH}/tokubackup_"`date +%Y%m%d.%H%M%S`
-[ ! -d "${FULL_BACKUP_PATH}" ] && echo "    Creating backup path ${FULL_BACKUP_PATH}" && mkdir $FULL_BACKUP_PATH && chown mysql:mysql $FULL_BACKUP_PATH
+[ ! -d "${FULL_BACKUP_PATH}" ] && echo "    Creating backup path ${FULL_BACKUP_PATH} and setting MySQL as the owner" && mkdir $FULL_BACKUP_PATH && chown mysql:mysql $FULL_BACKUP_PATH
+
+# Validate MySQL has write access to the destination specified
+
+su - mysql -c "touch ${FULL_BACKUP_PATH}/testfile"
+if [ $? -eq 0 ]; then
+	rm -rf ${FULL_BACKUP_PATH}/testfile
+else
+	echo "ERROR: MySQL user does not have the necessary access to the full path ${FULL_BACKUP_PATH}.  "
+	echo ""
+	exit 1
+fi
 
 # Backing up configuration
 
@@ -94,6 +106,7 @@ fi
 # Starting database backup
 
 mysql $CONN_PARAM -e "set tokudb_backup_dir='${FULL_BACKUP_PATH}'" > /dev/null &
+
 sleep 1 
 echo "    Backup Status : "
 while [ `mysql $CONN_PARAM -e "SELECT state FROM INFORMATION_SCHEMA.PROCESSLIST" | grep tokudb | wc -l` -gt 0 ]
