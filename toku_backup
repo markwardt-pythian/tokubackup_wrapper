@@ -78,6 +78,9 @@ DATA_DIR=`mysql $CONN_PARAM -e "SHOW VARIABLES LIKE 'datadir';" | awk '{print $2
 [ ${DATA_DIR#${DATA_DIR%?}} == "/" ] && DATA_DIR="${DATA_DIR%?}"
 [ -e "${DATA_DIR}/lost+found" ] && echo "    Found ${DATA_DIR}/lost+found.  Ensuring MySQL owns this directory." && chown -R mysql:mysql ${DATA_DIR}/lost+found  
 
+LOG_DIR=`mysql $CONN_PARAM -e "SHOW VARIABLES LIKE 'log_bin_basename';" | awk '{print $2}' | xargs dirname`
+[ -e "${LOG_DIR}/lost+found" ] && echo "    Found ${LOG_DIR}/lost+found.  Ensuring MySQL owns this directory." && chown -R mysql:mysql ${LOG_DIR}/lost+found
+
 # Validate MySQL has write access to the destination specified
 
 su - mysql -c "touch ${FULL_BACKUP_PATH}/testfile"
