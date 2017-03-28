@@ -1,5 +1,10 @@
 #!/bin/sh
 
+## Change log
+# - Added -r for xargs so if there is no value it won't doing anything, before if log_bin_basename had no value dirname for xargs was throwing an error
+# - Added a check to make sure the destination directory has enough space
+# - Added a file count check because the number of files in the backup data dir should match the number of files in the mysql data dir
+
 echo ""
 echo "Starting TokuDB backup"
 echo ""
@@ -78,7 +83,7 @@ DATA_DIR=`mysql $CONN_PARAM -e "SHOW VARIABLES LIKE 'datadir';" | awk '{print $2
 [ ${DATA_DIR#${DATA_DIR%?}} == "/" ] && DATA_DIR="${DATA_DIR%?}"
 [ -e "${DATA_DIR}/lost+found" ] && echo "    Found ${DATA_DIR}/lost+found.  Ensuring MySQL owns this directory." && chown -R mysql:mysql ${DATA_DIR}/lost+found  
 
-LOG_DIR=`mysql $CONN_PARAM -e "SHOW VARIABLES LIKE 'log_bin_basename';" | awk '{print $2}' | xargs dirname`
+LOG_DIR=`mysql $CONN_PARAM -e "SHOW VARIABLES LIKE 'log_bin_basename';" | awk '{print $2}' | xargs -r dirname`
 [ -e "${LOG_DIR}/lost+found" ] && echo "    Found ${LOG_DIR}/lost+found.  Ensuring MySQL owns this directory." && chown -R mysql:mysql ${LOG_DIR}/lost+found
 
 # Validate MySQL has write access to the destination specified
@@ -87,10 +92,18 @@ su - mysql -c "touch ${FULL_BACKUP_PATH}/testfile"
 if [ $? -eq 0 ]; then
 	rm -rf ${FULL_BACKUP_PATH}/testfile
 else
-	echo "ERROR: MySQL user does not have the necessary access to the full path ${FULL_BACKUP_PATH}.  "
+	echo "  ERROR: MySQL user does not have the necessary access to the full path ${FULL_BACKUP_PATH}.  "
 	echo ""
 	exit 1
 fi
+
+# Ensure there is enough room in the destination 
+echo ""
+FREESPACE=`df -k $FULL_BACKUP_PATH | tail -n 1 | awk '{print $3}'`
+DATASPACE=`du -s $DATA_DIR | awk '{print $1}'`
+DATA_FILE_COUNT=`find $DATA_DIR/ | wc -l`
+echo "    MySQL data directory size : $DATASPACE"
+[ "$FREESPACE" -lt "$DATASPACE" ] && echo "    ERROR: There is not enough space at $FULL_BACKUP_PATH" && exit 1
 
 # Backing up configuration
 
@@ -123,13 +136,18 @@ do
 	mysql $CONN_PARAM -e "SELECT CONCAT('        ',state) FROM INFORMATION_SCHEMA.PROCESSLIST" | grep tokudb
 	sleep 1
 done 
-echo "    Backup Complete!"
 
 # Final Steps
 
+BACKUP_FILE_COUNT=`find $FULL_BACKUP_PATH/mysql_data_dir/ | wc -l`
 echo ""
 echo "Final steps"
 echo "    Backup Size : "`du -sh $FULL_BACKUP_PATH`
+echo "    Files in Backup : $BACKUP_FILE_COUNT"
+echo "    Files in MySQL data directory : $DATA_FILE_COUNT"
+[ $BACKUP_FILE_COUNT -ne $DATA_FILE_COUNT ]  && echo "ERROR: The number of files in the backup don't match the number of files in the MySQL data directory" && exit 1
+
+echo "    Backup Completed!"
 
 if [ ${RETAIN} ]; then
 	echo "    Starting cleanup of old backups"
