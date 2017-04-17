@@ -4,6 +4,7 @@
 # - Added -r for xargs so if there is no value it won't doing anything, before if log_bin_basename had no value dirname for xargs was throwing an error
 # - Added a check to make sure the destination directory has enough space
 # - Added a file count check because the number of files in the backup data dir should match the number of files in the mysql data dir
+# - Added a check to ensure that the process is no longer running.  Ran into a scenario where the backup was still running but for one of the checks it wasn't in the processlist.
 
 echo ""
 echo "Starting TokuDB backup"
@@ -131,10 +132,21 @@ mysql $CONN_PARAM -e "set tokudb_backup_dir='${FULL_BACKUP_PATH}'" > /dev/null &
 
 sleep 1 
 echo "    Backup Status : "
-while [ `mysql $CONN_PARAM -e "SELECT state FROM INFORMATION_SCHEMA.PROCESSLIST" | grep tokudb | wc -l` -gt 0 ]
+TOKU_PROCESS_COUNT=`mysql $CONN_PARAM -e "SELECT state FROM INFORMATION_SCHEMA.PROCESSLIST" | grep tokudb | wc -l`
+while [ $TOKU_PROCESS_COUNT -gt 0 ]
 do 
 	mysql $CONN_PARAM -e "SELECT CONCAT('        ',state) FROM INFORMATION_SCHEMA.PROCESSLIST" | grep tokudb
 	sleep 1
+
+	# Adding validation that the process is gone as we have encountered a scenario where the process was not in the processlist, but the backup was still running
+	TOKU_PROCESS_COUNT=`mysql $CONN_PARAM -e "SELECT state FROM INFORMATION_SCHEMA.PROCESSLIST" | grep tokudb | wc -l`
+	FAIL_COUNT=0
+	while [ $TOKU_PROCESS_COUNT -eq 0 ] && [ $FAIL_COUNT -lt 5 ]; do
+		TOKU_PROCESS_COUNT=`mysql $CONN_PARAM -e "SELECT state FROM INFORMATION_SCHEMA.PROCESSLIST" | grep tokudb | wc -l`
+		#echo "Validating that the backup process is truely complete : $TOKU_PROCESS_COUNT.  FAIL_COUNT = $FAIL_COUNT"
+		FAIL_COUNT=$((FAIL_COUNT + 1))
+		sleep 1		
+	done
 done 
 
 # Final Steps
