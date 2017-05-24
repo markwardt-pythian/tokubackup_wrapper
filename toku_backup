@@ -5,6 +5,7 @@
 # - Added a check to make sure the destination directory has enough space
 # - Added a file count check because the number of files in the backup data dir should match the number of files in the mysql data dir
 # - Added a check to ensure that the process is no longer running.  Ran into a scenario where the backup was still running but for one of the checks it wasn't in the processlist.
+# - When there is a difference in files, the script will do a diff to display the differences between the backup directory and the data directory. Also moved the file count for the data directory down to where it does the comparison
 
 echo ""
 echo "Starting TokuDB backup"
@@ -102,7 +103,6 @@ fi
 echo ""
 FREESPACE=`df -k $FULL_BACKUP_PATH | tail -n 1 | awk '{print $3}'`
 DATASPACE=`du -s $DATA_DIR | awk '{print $1}'`
-DATA_FILE_COUNT=`find $DATA_DIR/ | wc -l`
 echo "    MySQL data directory size : $DATASPACE"
 [ "$FREESPACE" -lt "$DATASPACE" ] && echo "    ERROR: There is not enough space at $FULL_BACKUP_PATH" && exit 1
 
@@ -150,14 +150,20 @@ do
 done 
 
 # Final Steps
-
+DATA_FILE_COUNT=`find $DATA_DIR/ | wc -l`
 BACKUP_FILE_COUNT=`find $FULL_BACKUP_PATH/mysql_data_dir/ | wc -l`
 echo ""
 echo "Final steps"
 echo "    Backup Size : "`du -sh $FULL_BACKUP_PATH`
 echo "    Files in Backup : $BACKUP_FILE_COUNT"
 echo "    Files in MySQL data directory : $DATA_FILE_COUNT"
-[ $BACKUP_FILE_COUNT -ne $DATA_FILE_COUNT ]  && echo "ERROR: The number of files in the backup don't match the number of files in the MySQL data directory" && exit 1
+if [ $BACKUP_FILE_COUNT -ne $DATA_FILE_COUNT ]; then
+	echo "ERROR: The number of files in the backup don't match the number of files in the MySQL data directory"
+	echo "Diff Results:"
+	diff -rq $DATA_DIR/ $FULL_BACKUP_PATH/mysql_data_dir/ 
+	echo ""
+	exit 1
+fi
 
 echo "    Backup Completed!"
 
